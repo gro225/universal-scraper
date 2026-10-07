@@ -1,0 +1,50 @@
+# Эталонная задача Фазы 0. Критерий готовности: >= 200 документов и >= 100 изображений.
+#
+#   harvester run tasks/sol-lemon.yaml -v
+
+task: sol-lemon
+version: 1
+
+query:
+  subject: "Sol Lemon"
+  intent: "кто это, где упоминается, весь визуальный контент"
+  languages: [en, ru]
+  # Ограничивают выдачу до одной интерпретации. В Фазе 2 эти подсказки будет
+  # предлагать сам планировщик после пробного обхода (дизамбигуация).
+  include_hints: ["music", "artist", "band"]
+  exclude_hints: ["cannabis strain", "лимонад"]
+
+discovery:
+  connectors: [searxng, generic_web]
+  seeds: []                 # можно добавить явные точки входа — они идут первыми
+  extra_queries:
+    - '"Sol Lemon" bandcamp'
+    - '"Sol Lemon" soundcloud'
+    - '"Sol Lemon" discogs'
+  max_seeds: 200
+  pages_per_query: 2
+
+crawl:
+  scope:
+    follow: seed_domain_plus_outlinks
+    max_depth: 2
+    allow: ["*"]
+    deny: ["*/login*", "*/cart*", "*/signup*", "*/tag/*", "*.exe", "*.zip", "*.pdf"]
+  politeness:
+    respect_robots: true
+    delay_per_domain_ms: 1500
+    max_concurrency_per_domain: 2
+  budget:
+    max_pages: 2000
+    max_wall_clock_s: 3600
+    max_bytes: 5368709120
+
+extract:
+  want: [article_text, images, structured_ld, links]
+  min_text_chars: 250
+  media:
+    download: true
+    types: [image]
+    min_width: 200
+    min_height: 200
+    max_per_document: 20

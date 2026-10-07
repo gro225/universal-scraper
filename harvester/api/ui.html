@@ -1,0 +1,316 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Universal Harvester</title>
+<style>
+  :root {
+    --bg: #fbfbfa; --panel: #fff; --border: #e4e2dd; --text: #22201d;
+    --muted: #6f6a63; --accent: #2f6f4e; --accent-soft: #e8f1eb; --danger: #a63d40;
+    --radius: 10px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #16181a; --panel: #1e2124; --border: #2f3439; --text: #e6e3de;
+      --muted: #969089; --accent: #6fbf90; --accent-soft: #1e2f26; --danger: #d98186;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    position: sticky; top: 0; z-index: 10; background: var(--panel);
+    border-bottom: 1px solid var(--border); padding: 12px 20px;
+    display: flex; gap: 16px; align-items: center; flex-wrap: wrap;
+  }
+  h1 { font-size: 16px; margin: 0; font-weight: 620; letter-spacing: -.01em; }
+  .status { display: flex; align-items: center; gap: 7px; font-size: 13px; color: var(--muted); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.running { background: var(--accent); animation: pulse 1.6s ease-in-out infinite; }
+  .dot.error { background: var(--danger); }
+  @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .35 } }
+  @media (prefers-reduced-motion: reduce) { .dot.running { animation: none } }
+
+  input[type=search], select {
+    font: inherit; padding: 7px 11px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--bg); color: var(--text); min-width: 0;
+  }
+  input[type=search] { flex: 1 1 240px; }
+  input:focus-visible, select:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  button {
+    font: inherit; padding: 7px 13px; border: 1px solid var(--border);
+    border-radius: var(--radius); background: var(--panel); color: var(--text); cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); }
+
+  main { padding: 20px; max-width: 1180px; margin: 0 auto; }
+  .stats { display: flex; gap: 22px; flex-wrap: wrap; margin-bottom: 18px; }
+  .stat b { display: block; font-size: 22px; font-weight: 640; letter-spacing: -.02em; }
+  .stat span { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 14px 16px; margin-bottom: 10px;
+  }
+  .card h3 { margin: 0 0 5px; font-size: 15px; font-weight: 600; }
+  .card h3 a { color: inherit; text-decoration: none; }
+  .card h3 a:hover { text-decoration: underline; }
+  .meta { font-size: 12.5px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; }
+  .kind {
+    font-size: 11px; padding: 1px 7px; border-radius: 20px;
+    background: var(--accent-soft); color: var(--accent); font-weight: 600;
+  }
+  .excerpt { margin: 7px 0 0; font-size: 13.5px; color: var(--muted); }
+
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .gallery a {
+    display: block; aspect-ratio: 1; border-radius: var(--radius); overflow: hidden;
+    border: 1px solid var(--border); background: var(--panel);
+  }
+  .gallery img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .gallery a:hover { border-color: var(--accent); }
+
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.primary:hover { filter: brightness(1.08); }
+
+  .grab {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px; margin-bottom: 18px; display: grid; gap: 10px;
+  }
+  .grab > label { font-size: 13px; color: var(--muted); }
+  .grab textarea {
+    font: 13.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+    padding: 9px 11px; border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--bg); color: var(--text); resize: vertical; width: 100%;
+  }
+  .grab textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .grab-row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; font-size: 13.5px; }
+  .grab-row label { display: flex; align-items: center; gap: 5px; color: var(--muted); }
+  .grab-row button { margin-left: auto; }
+  .grab-msg { margin: 0; font-size: 13px; color: var(--muted); min-height: 1.2em; }
+  .grab-msg.error { color: var(--danger); }
+  .grab-msg.ok { color: var(--accent); }
+
+  .empty { color: var(--muted); padding: 40px 0; text-align: center; }
+  .more { display: block; margin: 16px auto 0; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Universal Harvester</h1>
+  <span class="status"><span class="dot" id="dot"></span><span id="statusText">загрузка…</span></span>
+  <select id="taskFilter" aria-label="Задача"><option value="">Все задачи</option></select>
+  <input type="search" id="q" placeholder="Поиск по собранному…" aria-label="Поиск">
+  <button id="tabDocs" aria-pressed="true">Документы</button>
+  <button id="tabMedia" aria-pressed="false">Галерея</button>
+  <button id="grabToggle" class="primary">Собрать страницы</button>
+</header>
+
+<main>
+  <form class="grab" id="grabForm" hidden>
+    <label for="grabUrls">Адреса — по одному в строке</label>
+    <textarea id="grabUrls" rows="4" required
+      placeholder="https://example.com/article&#10;example.com/blog"></textarea>
+    <div class="grab-row">
+      <label for="grabDepth">Глубина</label>
+      <select id="grabDepth">
+        <option value="0" selected>только эти страницы</option>
+        <option value="1">+ ссылки с них</option>
+        <option value="2">+ два уровня вглубь</option>
+        <option value="3">+ три уровня вглубь</option>
+      </select>
+      <label><input type="checkbox" id="grabSameDomain" checked> не выходить за домены</label>
+      <label><input type="checkbox" id="grabMedia" checked> качать изображения</label>
+      <button type="submit" class="primary" id="grabSubmit">Запустить</button>
+    </div>
+    <p class="grab-msg" id="grabMsg" role="status"></p>
+  </form>
+
+  <div class="stats" id="stats"></div>
+  <div id="docs"></div>
+  <div id="media" class="gallery hidden"></div>
+  <button class="more" id="more">Показать ещё</button>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const state = { tab: 'docs', task: '', q: '', offset: 0, pageSize: 30 };
+
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
+  ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+async function api(path, opts) {
+  const r = await fetch(path, opts);
+  if (!r.ok) throw new Error(path + ' -> ' + r.status);
+  return r.json();
+}
+
+// --- статус прогона: опрашиваем, потому что прогон может идти и из CLI
+async function pollStatus() {
+  try {
+    const { runs } = await api('/runs?active=true&limit=1');
+    const dot = $('dot');
+    if (runs.length) {
+      const r = runs[0], s = r.stats || {};
+      dot.className = 'dot running';
+      $('statusText').textContent =
+        `идёт «${r.task_name}» · ${s.documents ?? 0} док · ${s.media ?? 0} изобр`;
+    } else {
+      dot.className = 'dot';
+      $('statusText').textContent = 'простой';
+    }
+  } catch {
+    $('dot').className = 'dot error';
+    $('statusText').textContent = 'API недоступен';
+  }
+}
+
+async function loadTasks() {
+  try {
+    const { tasks } = await api('/tasks');
+    const sel = $('taskFilter');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Все задачи</option>';   // иначе дубли при обновлении
+    for (const t of tasks) {
+      const o = document.createElement('option');
+      o.value = t.id;
+      o.textContent = `${t.name} (${t.documents})`;
+      sel.append(o);
+    }
+    sel.value = current;
+    renderStats(tasks);
+  } catch { /* пусто — покажем ниже */ }
+}
+
+function renderStats(tasks) {
+  const docs = tasks.reduce((a, t) => a + Number(t.documents || 0), 0);
+  $('stats').innerHTML =
+    `<div class="stat"><b>${docs}</b><span>документов</span></div>` +
+    `<div class="stat"><b>${tasks.length}</b><span>задач</span></div>`;
+}
+
+// --- содержимое
+async function load(reset) {
+  if (reset) { state.offset = 0; }
+  const taskQ = state.task ? `&task_id=${state.task}` : '';
+
+  if (state.tab === 'media') {
+    const { media } = await api(`/media?limit=${state.pageSize}&offset=${state.offset}${taskQ}`);
+    render(media.map(m => `
+      <a href="/media/${m.id}" target="_blank" rel="noopener"
+         title="${esc(m.document_title || m.source_url)}">
+        <img loading="lazy" src="/media/${m.id}?thumb=true" alt="${esc(m.document_title || '')}">
+      </a>`).join(''), media.length, reset);
+    return;
+  }
+
+  let items;
+  if (state.q) {
+    const res = await api('/search', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: state.q, task_id: state.task || null, limit: state.pageSize }),
+    });
+    items = res.hits || [];
+  } else {
+    const res = await api(`/items?limit=${state.pageSize}&offset=${state.offset}${taskQ}`);
+    items = res.items || [];
+  }
+
+  render(items.map(d => `
+    <article class="card">
+      <h3><a href="${esc(d.source_url)}" target="_blank" rel="noopener">${esc(d.title || d.source_url)}</a></h3>
+      <div class="meta">
+        <span class="kind">${esc(d.kind || 'page')}</span>
+        <span>${esc(d.domain || '')}</span>
+        ${d.published_at ? `<span>${esc(String(d.published_at).slice(0, 10))}</span>` : ''}
+        ${d.media_count ? `<span>${d.media_count} изобр.</span>` : ''}
+      </div>
+      ${d.excerpt ? `<p class="excerpt">${esc(d.excerpt.slice(0, 220))}…</p>` : ''}
+    </article>`).join(''), items.length, reset);
+}
+
+function render(html, count, reset) {
+  const box = state.tab === 'media' ? $('media') : $('docs');
+  if (reset) box.innerHTML = '';
+  if (!count && reset) {
+    box.innerHTML = '<p class="empty">Ничего не найдено. Запустите задачу — из трея или командой <code>harvester run</code>.</p>';
+  } else {
+    box.insertAdjacentHTML('beforeend', html);
+  }
+  state.offset += count;
+  $('more').classList.toggle('hidden', count < state.pageSize || Boolean(state.q));
+}
+
+function switchTab(tab) {
+  state.tab = tab;
+  $('tabDocs').setAttribute('aria-pressed', String(tab === 'docs'));
+  $('tabMedia').setAttribute('aria-pressed', String(tab === 'media'));
+  $('docs').classList.toggle('hidden', tab !== 'docs');
+  $('media').classList.toggle('hidden', tab !== 'media');
+  load(true);
+}
+
+$('tabDocs').onclick = () => switchTab('docs');
+$('tabMedia').onclick = () => switchTab('media');
+$('taskFilter').onchange = (e) => { state.task = e.target.value; load(true); };
+$('more').onclick = () => load(false);
+
+// --- «Собрать страницы»: короткий путь без темы, поиска и YAML
+$('grabToggle').onclick = () => {
+  const form = $('grabForm');
+  form.hidden = !form.hidden;
+  if (!form.hidden) $('grabUrls').focus();
+};
+
+$('grabForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const urls = $('grabUrls').value.split('\n').map(s => s.trim()).filter(Boolean);
+  const msg = $('grabMsg');
+  if (!urls.length) { msg.className = 'grab-msg error'; msg.textContent = 'Нужен хотя бы один адрес'; return; }
+
+  const btn = $('grabSubmit');
+  btn.disabled = true;
+  msg.className = 'grab-msg';
+  msg.textContent = 'Запускаю…';
+  try {
+    const res = await api('/grab', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        urls,
+        depth: Number($('grabDepth').value),
+        same_domain: $('grabSameDomain').checked,
+        media: $('grabMedia').checked,
+      }),
+    });
+    msg.className = 'grab-msg ok';
+    msg.textContent = `Запущено: ${res.name} (${res.urls.length} адр.). Результаты появятся ниже.`;
+    $('grabUrls').value = '';
+    setTimeout(() => { pollStatus(); loadTasks(); load(true); }, 1500);
+  } catch (err) {
+    msg.className = 'grab-msg error';
+    msg.textContent = 'Не получилось: ' + err.message;
+  } finally {
+    btn.disabled = false;
+  }
+};
+
+let timer;
+$('q').oninput = (e) => {
+  clearTimeout(timer);
+  timer = setTimeout(() => { state.q = e.target.value.trim(); load(true); }, 250);
+};
+
+loadTasks();
+load(true);
+pollStatus();
+setInterval(pollStatus, 4000);
+</script>
+</body>
+</html>

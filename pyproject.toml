@@ -1,0 +1,56 @@
+[project]
+name = "universal-harvester"
+version = "0.1.0"
+description = "Универсальная система парсинга: задача -> краулеры -> единое хранилище"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "httpx[http2]>=0.27",
+    "asyncpg>=0.30",
+    "redis>=5.2",
+    "aioboto3>=13.2",
+    "trafilatura>=1.12",
+    "selectolax>=0.3.21",
+    "Pillow>=11.0",
+    "PyYAML>=6.0",
+    "typer>=0.15",
+    "rich>=13.9",
+    "python-dateutil>=2.9",
+]
+
+[project.optional-dependencies]
+tray = ["pystray>=0.19"]
+# Тир T1. После установки нужен один раз `crawl4ai-setup` — он ставит браузеры.
+render = ["crawl4ai>=0.6"]
+dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8"]
+
+[project.scripts]
+harvester = "harvester.cli:app"
+harvester-tray = "harvester.tray:main"
+
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["harvester*"]
+
+[tool.setuptools.package-data]
+harvester = ["api/*.html"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4"]
+# B008 — идиома typer (Argument/Option в дефолтах параметров).
+# BLE не включаем осознанно: воркер краулера обязан переживать любую ошибку
+# на отдельной странице, не роняя прогон.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
