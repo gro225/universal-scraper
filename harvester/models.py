@@ -83,6 +83,18 @@ class ExtractSpec(BaseModel):
     media: MediaSpec = Field(default_factory=MediaSpec)
 
 
+class QualitySpec(BaseModel):
+    """Оценка качества найденного.
+
+    Порог здесь — **не** фильтр записи: оценка всегда сохраняется, а порог применяется
+    при чтении. Значит его можно поменять задним числом, ничего не перекрауливая.
+    """
+
+    embed: bool = True
+    # с чем сравнивать: None -> показывать всё, оценку только проставить
+    relevance_threshold: float | None = None
+
+
 class Task(BaseModel):
     """Полное описание задачи. Версионируется, хранится, воспроизводится."""
 
@@ -92,6 +104,7 @@ class Task(BaseModel):
     discovery: DiscoverySpec = Field(default_factory=DiscoverySpec)
     crawl: CrawlSpec = Field(default_factory=CrawlSpec)
     extract: ExtractSpec = Field(default_factory=ExtractSpec)
+    quality: QualitySpec = Field(default_factory=QualitySpec)
 
     @model_validator(mode="after")
     def _needs_subject_or_seeds(self) -> Task:
@@ -153,6 +166,8 @@ class Task(BaseModel):
             ),
             # адрес назван человеком — сохраняем страницу, даже если текста мало
             extract=ExtractSpec(min_text_chars=0, media=MediaSpec(download=media)),
+            # адреса названы явно, темы нет — оценивать релевантность не от чего
+            quality=QualitySpec(embed=bool(subject)),
         )
 
 

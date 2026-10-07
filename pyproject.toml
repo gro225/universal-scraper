@@ -13,16 +13,19 @@ dependencies = [
     "redis>=5.2",
     "aioboto3>=13.2",
     "trafilatura>=1.12",
-    "selectolax>=0.3.21",
+    "selectolax>=1.0",
     "Pillow>=11.0",
     "PyYAML>=6.0",
     "typer>=0.15",
     "rich>=13.9",
     "python-dateutil>=2.9",
+    # нужен модулю оценки релевантности; сама модель — extra [embed]
+    "numpy>=2.0",
 ]
 
 [project.optional-dependencies]
 tray = ["pystray>=0.19"]
+embed = ["fastembed>=0.9"]
 # Тир T1. После установки нужен один раз `crawl4ai-setup` — он ставит браузеры.
 render = ["crawl4ai>=0.6"]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8"]

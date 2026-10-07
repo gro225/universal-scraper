@@ -16,7 +16,8 @@ COPY harvester ./harvester
 COPY deploy ./deploy
 COPY tests ./tests
 
-RUN pip install --upgrade pip && pip install -e ".[dev]"
+# [embed] — модель оценки релевантности; она нужна прогонам, запущенным через API
+RUN pip install --upgrade pip && pip install -e ".[dev,embed]"
 
 EXPOSE 8080
 CMD ["uvicorn", "harvester.api.main:app", "--host", "0.0.0.0", "--port", "8080"]

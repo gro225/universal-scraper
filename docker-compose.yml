@@ -67,6 +67,7 @@ services:
       S3_PUBLIC_ENDPOINT: http://localhost:9000
       MEILI_URL: http://meilisearch:7700
       SEARXNG_URL: http://searxng:8080
+      EMBED_CACHE_DIR: /models
     depends_on:
       postgres: {condition: service_healthy}
       redis: {condition: service_healthy}
@@ -74,8 +75,11 @@ services:
       meilisearch: {condition: service_started}
     volumes:
       - ./tasks:/app/tasks:ro
+      # модель 0.22 ГБ качается один раз и переживает пересборку образа
+      - models:/models
 
 volumes:
+  models:
   pgdata:
   miniodata:
   meilidata:

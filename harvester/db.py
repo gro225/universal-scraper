@@ -327,22 +327,130 @@ async def list_items(
     task_id: uuid.UUID | None = None,
     *,
     domain: str | None = None,
+    min_relevance: float | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
     p = await pool()
     rows = await p.fetch(
         """
-        select d.id, d.kind, d.title, d.source_url, d.domain, d.lang,
+        select d.id, d.kind, d.title, d.source_url, d.domain, d.lang, d.relevance,
                d.published_at, d.fetched_at, left(d.text, 400) as excerpt,
                (select count(*) from document_media dm where dm.document_id = d.id) as media_count
           from documents d
          where ($1::uuid is null or d.task_id = $1)
            and ($2::text is null or d.domain = $2)
+           and ($5::real is null or d.relevance >= $5)
          order by d.created_at desc
          limit $3 offset $4
         """,
-        task_id, domain, limit, offset,
+        task_id, domain, limit, offset, min_relevance,
+    )
+    return [dict(r) for r in rows]
+
+
+# ------------------------------------------------------------------- эмбеддинги
+
+
+def _vec(values) -> str:
+    """pgvector принимает литерал вида '[0.1,0.2,...]'."""
+    return "[" + ",".join(f"{float(x):.6f}" for x in values) + "]"
+
+
+async def save_embeddings(rows: list[tuple[uuid.UUID, Any, float | None]]) -> None:
+    """(document_id, вектор, релевантность) пачкой."""
+    if not rows:
+        return
+    p = await pool()
+    await p.executemany(
+        "update documents set embedding = $2::vector, relevance = $3 where id = $1",
+        [(doc_id, _vec(vec), rel) for doc_id, vec, rel in rows],
+    )
+
+
+async def rescore_task(task_id: uuid.UUID, positive, negative=None) -> int:
+    """Пересчитать релевантность по новым якорям, не трогая векторы документов.
+
+    Векторы документов от подсказок не зависят — меняется только, с чем их сравнивают.
+    Поэтому правка `exclude_hints` стоит одного UPDATE, а не повторного прогона модели.
+
+    `<=>` это косинусное расстояние (1 - cos), поэтому
+    cos_pos - cos_neg  ==  dist_neg - dist_pos.
+    """
+    p = await pool()
+    if negative is None:
+        sql = """
+            update documents set relevance = 1 - (embedding <=> $2::vector)
+             where task_id = $1 and embedding is not null
+        """
+        args = (task_id, _vec(positive))
+    else:
+        sql = """
+            update documents
+               set relevance = (embedding <=> $3::vector) - (embedding <=> $2::vector)
+             where task_id = $1 and embedding is not null
+        """
+        args = (task_id, _vec(positive), _vec(negative))
+    result = await p.execute(sql, *args)
+    return int(result.split()[-1]) if result.startswith("UPDATE") else 0
+
+
+async def documents_without_embedding(
+    task_id: uuid.UUID | None = None, *, limit: int = 200
+) -> list[dict[str, Any]]:
+    """Для дозаполнения уже собранного."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select d.id, d.title, d.text, d.task_id
+          from documents d
+         where d.embedding is null
+           and ($1::uuid is null or d.task_id = $1)
+         order by d.created_at
+         limit $2
+        """,
+        task_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def semantic_search(
+    vector, *, task_id: uuid.UUID | None = None, limit: int = 20,
+    min_relevance: float | None = None,
+) -> list[dict[str, Any]]:
+    """Поиск по смыслу: ближайшие по косинусу документы."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select d.id, d.kind, d.title, d.source_url, d.domain, d.lang, d.relevance,
+               d.published_at, left(d.text, 400) as excerpt,
+               1 - (d.embedding <=> $1::vector) as similarity
+          from documents d
+         where d.embedding is not null
+           and ($2::uuid is null or d.task_id = $2)
+           and ($4::real is null or d.relevance >= $4)
+         order by d.embedding <=> $1::vector
+         limit $3
+        """,
+        _vec(vector), task_id, limit, min_relevance,
+    )
+    return [dict(r) for r in rows]
+
+
+async def relevance_histogram(task_id: uuid.UUID) -> list[dict[str, Any]]:
+    """Распределение оценок — чтобы подобрать порог глазами, а не наугад."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select width_bucket(relevance, -1, 1, 20) as bucket,
+               round(min(relevance)::numeric, 3) as lo,
+               round(max(relevance)::numeric, 3) as hi,
+               count(*) as n
+          from documents
+         where task_id = $1 and relevance is not null
+         group by 1 order by 1
+        """,
+        task_id,
     )
     return [dict(r) for r in rows]
 

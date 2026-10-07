@@ -17,7 +17,9 @@ from urllib.parse import urljoin
 
 import trafilatura
 from dateutil import parser as dateparser
-from selectolax.parser import HTMLParser
+
+# lexbor, а не parser: бэкенд Modest удалён в selectolax 1.0
+from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from ..hashing import canonical_url, content_sha256, domain_of, simhash
 from ..models import DocumentDraft, ExtractResult, MediaRef, MediaSpec, RawCapture, Task

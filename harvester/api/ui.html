@@ -97,6 +97,13 @@
   .grab-msg.error { color: var(--danger); }
   .grab-msg.ok { color: var(--accent); }
 
+  .qual { display: flex; align-items: center; gap: 5px; font-size: 13px; color: var(--muted); }
+  .rel {
+    font-size: 11px; padding: 1px 7px; border-radius: 20px; font-weight: 600;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .rel.low { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   .more { display: block; margin: 16px auto 0; }
   .hidden { display: none; }
@@ -108,6 +115,19 @@
   <span class="status"><span class="dot" id="dot"></span><span id="statusText">загрузка…</span></span>
   <select id="taskFilter" aria-label="Задача"><option value="">Все задачи</option></select>
   <input type="search" id="q" placeholder="Поиск по собранному…" aria-label="Поиск">
+  <label class="qual" title="Отсечь нерелевантное по оценке">
+    качество
+    <select id="minRel" aria-label="Порог релевантности">
+      <option value="">всё</option>
+      <option value="0.1">&gt; 0.1</option>
+      <option value="0.2">&gt; 0.2</option>
+      <option value="0.3">&gt; 0.3</option>
+      <option value="0.4">&gt; 0.4</option>
+    </select>
+  </label>
+  <label class="qual" title="Искать по смыслу, а не по словам">
+    <input type="checkbox" id="semantic"> по смыслу
+  </label>
   <button id="tabDocs" aria-pressed="true">Документы</button>
   <button id="tabMedia" aria-pressed="false">Галерея</button>
   <button id="grabToggle" class="primary">Собрать страницы</button>
@@ -141,7 +161,8 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { tab: 'docs', task: '', q: '', offset: 0, pageSize: 30 };
+const state = { tab: 'docs', task: '', q: '', minRel: '', semantic: false,
+                offset: 0, pageSize: 30 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
@@ -200,6 +221,7 @@ function renderStats(tasks) {
 async function load(reset) {
   if (reset) { state.offset = 0; }
   const taskQ = state.task ? `&task_id=${state.task}` : '';
+  const relQ = state.minRel ? `&min_relevance=${state.minRel}` : '';
 
   if (state.tab === 'media') {
     const { media } = await api(`/media?limit=${state.pageSize}&offset=${state.offset}${taskQ}`);
@@ -215,11 +237,15 @@ async function load(reset) {
   if (state.q) {
     const res = await api('/search', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ q: state.q, task_id: state.task || null, limit: state.pageSize }),
+      body: JSON.stringify({
+        q: state.q, task_id: state.task || null, limit: state.pageSize,
+        semantic: state.semantic,
+        min_relevance: state.minRel ? Number(state.minRel) : null,
+      }),
     });
     items = res.hits || [];
   } else {
-    const res = await api(`/items?limit=${state.pageSize}&offset=${state.offset}${taskQ}`);
+    const res = await api(`/items?limit=${state.pageSize}&offset=${state.offset}${taskQ}${relQ}`);
     items = res.items || [];
   }
 
@@ -228,6 +254,7 @@ async function load(reset) {
       <h3><a href="${esc(d.source_url)}" target="_blank" rel="noopener">${esc(d.title || d.source_url)}</a></h3>
       <div class="meta">
         <span class="kind">${esc(d.kind || 'page')}</span>
+        ${d.relevance != null ? `<span class="rel ${d.relevance < 0.2 ? 'low' : ''}">${d.relevance >= 0 ? '+' : ''}${d.relevance.toFixed(2)}</span>` : ''}
         <span>${esc(d.domain || '')}</span>
         ${d.published_at ? `<span>${esc(String(d.published_at).slice(0, 10))}</span>` : ''}
         ${d.media_count ? `<span>${d.media_count} изобр.</span>` : ''}
@@ -260,6 +287,8 @@ function switchTab(tab) {
 $('tabDocs').onclick = () => switchTab('docs');
 $('tabMedia').onclick = () => switchTab('media');
 $('taskFilter').onchange = (e) => { state.task = e.target.value; load(true); };
+$('minRel').onchange = (e) => { state.minRel = e.target.value; load(true); };
+$('semantic').onchange = (e) => { state.semantic = e.target.checked; if (state.q) load(true); };
 $('more').onclick = () => load(false);
 
 // --- «Собрать страницы»: короткий путь без темы, поиска и YAML

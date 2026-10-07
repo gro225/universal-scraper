@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     # требует stealth-фетчера (Scrapling), а не просто headless-браузера.
     render_on_block: bool = False
 
+    # --- эмбеддинги и релевантность ---
+    # ONNX, а не torch: на 8 ГБ памяти sentence-transformers не поставить.
+    embed_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
+    embed_dim: int = 384
+    embed_batch: int = 32
+    embed_enabled: bool = True
+    embed_cache_dir: str | None = None   # по умолчанию кэш fastembed
+
     # --- API ---
     api_host: str = "0.0.0.0"
     api_port: int = 8080

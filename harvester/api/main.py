@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from pydantic import ValidationError
 
-from .. import db, search, storage
+from .. import db, embeddings, search, storage
 from ..frontier import is_alive, redis, request_stop
 from ..models import RunState, Task
 from ..orchestrator import execute
@@ -236,10 +236,12 @@ async def run_events(run_id: uuid.UUID) -> StreamingResponse:
 async def list_items(
     task_id: uuid.UUID | None = None,
     domain: str | None = None,
+    min_relevance: float | None = Query(None, description="Порог: -1..1, обычно 0.2-0.4"),
     limit: int = Query(50, le=500),
     offset: int = 0,
 ) -> dict[str, Any]:
-    items = await db.list_items(task_id, domain=domain, limit=limit, offset=offset)
+    items = await db.list_items(task_id, domain=domain, min_relevance=min_relevance,
+                                limit=limit, offset=offset)
     return {"items": [{**i, "id": str(i["id"])} for i in items], "limit": limit,
             "offset": offset}
 
@@ -249,8 +251,28 @@ async def search_items(
     q: str = Body(..., embed=True),
     task_id: str | None = Body(None, embed=True),
     limit: int = Body(20, embed=True),
+    semantic: bool = Body(False, embed=True),
+    min_relevance: float | None = Body(None, embed=True),
 ) -> dict[str, Any]:
-    return await search.search(q, task_id=task_id, limit=limit)
+    """semantic=false — по словам (Meilisearch); true — по смыслу (эмбеддинги)."""
+    if not semantic:
+        return await search.search(q, task_id=task_id, limit=limit)
+
+    try:
+        vector = (await embeddings.embed_async([q]))[0]
+    except embeddings.EmbeddingsUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
+    hits = await db.semantic_search(
+        vector, task_id=uuid.UUID(task_id) if task_id else None,
+        limit=limit, min_relevance=min_relevance,
+    )
+    return {"hits": [{**h, "id": str(h["id"])} for h in hits], "mode": "semantic"}
+
+
+@app.get("/tasks/{task_id}/relevance")
+async def task_relevance(task_id: uuid.UUID) -> dict[str, Any]:
+    """Распределение оценок — чтобы подобрать порог по данным, а не наугад."""
+    return {"buckets": await db.relevance_histogram(task_id)}
 
 
 @app.get("/media")

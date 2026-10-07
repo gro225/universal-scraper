@@ -60,6 +60,7 @@ harvester stats <run_id>
 | Оркестрация | FSM прогона в Postgres, фронтир в Redis, бюджеты | `orchestrator/run.py`, `frontier.py` |
 | Fetch | T0 (HTTP), robots.txt, вежливость, circuit breaker, SSRF-guard | `connectors/generic_web.py` |
 | Извлечение | JSON-LD/OpenGraph → trafilatura → медиа и ссылки | `extractors/generic.py` |
+| Релевантность | эмбеддинги (fastembed/ONNX) + pgvector, оценка «тема минус антипример», поиск по смыслу | `embeddings.py`, `db.py` |
 | Задел под Фазу 2 | минификация DOM для LLM-промпта (53–87% экономии) | `extractors/minify.py` |
 | Медиа | скачивание, дедуп по sha256, размеры, EXIF, webp-превью | `media/pipeline.py` |
 | Хранилище | Bronze (MinIO) + Silver (Postgres) + Meilisearch | `storage.py`, `db.py`, `search.py` |
@@ -69,8 +70,8 @@ harvester stats <run_id>
 
 Это не пробелы, а следующие фазы (см. ARCHITECTURE.md §14):
 
-- **Фаза 1** — Playwright-тир для SPA, pHash/OCR/CLIP у медиа, pgvector и семантический
-  поиск, фильтр релевантности, near-dup дедуп по simhash (сам simhash уже считается и пишется).
+- **Фаза 1** — осталось: pHash/OCR/CLIP у медиа, near-dup дедуп по simhash (сам simhash
+  уже считается и пишется). Рендер SPA (crawl4ai) и фильтр релевантности — сделаны.
 - **Фаза 2** — коннекторы (RSS, Reddit, YouTube, Telegram), LLM-экстрактор с индукцией
   CSS-рецептов, дизамбигуация темы, расписания, event bus.
 - **Фаза 3** — Gold-слой (Parquet/Iceberg), Metabase/DuckDB, граф сущностей, алерты.

@@ -23,6 +23,7 @@ import httpx
 from .. import connectors, db, search, storage
 from ..config import settings
 from ..connectors import render
+from ..embeddings import EmbeddingsUnavailable, anchors_for, document_text, embed_async
 from ..frontier import Frontier, heartbeat
 from ..hashing import canonical_url, registrable_domain
 from ..media import MediaSkipped, process_media
@@ -71,10 +72,13 @@ class RunContext:
         self.seed_domains: set[str] = set()
         self.stop_reason: str | None = None
         self.index_buffer: list[dict[str, Any]] = []
+        self.embed_buffer: list[tuple[uuid.UUID, str]] = []
+        self.anchors = None          # векторы «что ищем» / «что не ищем»
+        self.embed_on = task.quality.embed and settings().embed_enabled
         self.counters = {
             "seeds": 0, "fetched": 0, "documents": 0, "duplicates": 0,
             "media": 0, "media_new": 0, "errors": 0, "skipped_robots": 0,
-            "media_skipped": 0, "infra_errors": 0, "rendered": 0,
+            "media_skipped": 0, "infra_errors": 0, "scored": 0, "rendered": 0,
         }
 
     async def emit(self, event: str, **fields: Any) -> None:
@@ -100,6 +104,7 @@ async def execute(task: Task, *, task_id: uuid.UUID, run_id: uuid.UUID) -> dict[
         await search.ensure_index()
 
         await db.update_run(run_id, state=RunState.PLANNING)
+        await _prepare_anchors(ctx)
         # пульс начинается сразу: discovery тоже может идти минутами
         watcher = asyncio.create_task(_stop_watcher(ctx))
         try:
@@ -109,6 +114,7 @@ async def execute(task: Task, *, task_id: uuid.UUID, run_id: uuid.UUID) -> dict[
         finally:
             watcher.cancel()
         await _flush_index(ctx)
+        await _flush_embeddings(ctx)
 
         stats = await db.run_stats(run_id)
         stats.update(ctx.counters)
@@ -359,6 +365,11 @@ async def _store_document(ctx: RunContext, result: ExtractResult, ref: SourceRef
                 }
             )
 
+    if ctx.embed_on:
+        ctx.embed_buffer.append((doc_id, document_text(doc.title, doc.text)))
+        if len(ctx.embed_buffer) >= settings().embed_batch:
+            await _flush_embeddings(ctx)
+
     ctx.index_buffer.append(
         {
             "id": str(doc_id),
@@ -382,6 +393,51 @@ async def _store_document(ctx: RunContext, result: ExtractResult, ref: SourceRef
 
     if ctx.counters["documents"] % 25 == 0:
         await ctx.emit("progress", **ctx.counters, queue=await ctx.frontier.size())
+
+
+async def _prepare_anchors(ctx: RunContext) -> None:
+    """Готовит векторы темы. Без них оценивать не от чего — тогда просто не оцениваем."""
+    if not ctx.embed_on:
+        return
+    try:
+        ctx.anchors = await anchors_for(ctx.task)
+    except EmbeddingsUnavailable as exc:
+        log.warning("оценка релевантности отключена: %s", exc)
+        ctx.embed_on = False
+        return
+    except Exception:
+        log.exception("не смог подготовить якоря — продолжаю без оценки")
+        ctx.embed_on = False
+        return
+
+    if ctx.anchors is None:
+        ctx.embed_on = False            # точечный захват: темы нет
+    elif not ctx.anchors.has_negative:
+        # без антипримера косинус плохо режет омонимы — предупреждаем явно
+        log.warning(
+            "у задачи нет exclude_hints: оценка будет слабой на омонимах "
+            "(«Sol Lemon» без них подтягивает чистящее средство)"
+        )
+
+
+async def _flush_embeddings(ctx: RunContext) -> None:
+    """Считает векторы пачкой и проставляет оценку. Ошибки не роняют прогон."""
+    if not ctx.embed_buffer:
+        return
+    batch, ctx.embed_buffer = ctx.embed_buffer, []
+    try:
+        vectors = await embed_async([text for _, text in batch])
+    except Exception:
+        ctx.counters["infra_errors"] += 1
+        log.warning("не смог посчитать эмбеддинги для пачки из %s", len(batch), exc_info=True)
+        return
+
+    rows = [
+        (doc_id, vec, ctx.anchors.score(vec) if ctx.anchors else None)
+        for (doc_id, _), vec in zip(batch, vectors, strict=True)
+    ]
+    await db.save_embeddings(rows)
+    ctx.counters["scored"] += len(rows)
 
 
 async def _flush_index(ctx: RunContext) -> None:

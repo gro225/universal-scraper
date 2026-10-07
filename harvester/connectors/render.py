@@ -22,7 +22,8 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from selectolax.parser import HTMLParser
+# lexbor, а не parser: бэкенд Modest удалён в selectolax 1.0
+from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from ..config import settings
 from ..models import RawCapture, SourceRef

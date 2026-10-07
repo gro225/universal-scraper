@@ -13,8 +13,11 @@ from rich.console import Console
 from rich.table import Table
 
 from . import db, storage
+from . import embeddings as emb
 from . import search as search_mod
+from .config import settings
 from .models import Task
+from .models import Task as TaskModel
 from .orchestrator import execute
 
 app = typer.Typer(add_completion=False, help="Universal Harvester — Фаза 0")
@@ -130,6 +133,127 @@ def grab(
 
 
 @app.command()
+def embed(
+    task: str = typer.Option(None, "--task", help="Имя задачи; без него — все"),
+    limit: int = typer.Option(5000, "--limit", help="Сколько документов обработать"),
+    verbose: bool = typer.Option(False, "--verbose", "-v"),
+) -> None:
+    """Досчитать эмбеддинги и релевантность для уже собранного.
+
+    Нужно после того, как фильтр появился: документы, собранные раньше, оценок не имеют.
+    """
+    _setup_logging(verbose)
+
+    async def _run() -> None:
+        anchors_cache: dict = {}
+        done = failed = 0
+        with console.status("считаю эмбеддинги…") as status:
+            while done + failed < limit:
+                batch = await db.documents_without_embedding(
+                    await _task_id_by_name(task) if task else None,
+                    limit=min(settings().embed_batch * 4, limit - done - failed),
+                )
+                if not batch:
+                    break
+                vectors = await emb.embed_async(
+                    [emb.document_text(d["title"], d["text"]) for d in batch]
+                )
+                rows = []
+                for doc, vec in zip(batch, vectors, strict=True):
+                    tid = doc["task_id"]
+                    if tid not in anchors_cache:
+                        record = await db.get_task(tid)
+                        anchors_cache[tid] = (
+                            await emb.anchors_for(TaskModel.model_validate(record["spec"]))
+                            if record else None
+                        )
+                    anchors = anchors_cache[tid]
+                    rows.append((doc["id"], vec, anchors.score(vec) if anchors else None))
+                await db.save_embeddings(rows)
+                done += len(rows)
+                status.update(f"посчитано {done}…")
+
+        console.print(f"[green]готово:[/] {done} документов")
+        if failed:
+            console.print(f"[yellow]не удалось: {failed}[/]")
+        await db.close()
+        await storage.close()
+
+    _guard_infra(_run)
+
+
+@app.command()
+def rescore(task: str = typer.Argument(..., help="Имя задачи")) -> None:
+    """Переоценить релевантность после правки include_hints / exclude_hints.
+
+    Векторы документов не пересчитываются — только якоря, так что это мгновенно.
+    Порядок: поправить YAML -> harvester rescore <задача> -> harvester relevance <задача>.
+    """
+
+    async def _run() -> None:
+        task_id = await _task_id_by_name(task)
+        if not task_id:
+            console.print(f"[red]задача {task!r} не найдена[/]")
+            raise typer.Exit(1)
+        record = await db.get_task(task_id)
+        spec = TaskModel.model_validate(record["spec"])
+        anchors = await emb.anchors_for(spec)
+        if anchors is None:
+            console.print("[yellow]у задачи нет темы — оценивать не от чего[/]")
+            raise typer.Exit(1)
+
+        positive, negative = emb.anchor_texts(spec)
+        console.print(f"[dim]ищем:[/] {positive}")
+        console.print(f"[dim]не ищем:[/] {negative or '— (без антипримера оценка слабее)'}")
+        n = await db.rescore_task(task_id, anchors.positive, anchors.negative)
+        console.print(f"[green]переоценено:[/] {n} документов")
+        await db.close()
+        await storage.close()
+
+    _guard_infra(_run)
+
+
+@app.command()
+def relevance(task: str = typer.Argument(..., help="Имя задачи")) -> None:
+    """Распределение оценок — чтобы выбрать порог глазами, а не наугад."""
+
+    async def _run() -> None:
+        task_id = await _task_id_by_name(task)
+        if not task_id:
+            console.print(f"[red]задача {task!r} не найдена[/]")
+            raise typer.Exit(1)
+        buckets = await db.relevance_histogram(task_id)
+        if not buckets:
+            console.print("[yellow]оценок нет — сначала `harvester embed`[/]")
+            raise typer.Exit(1)
+
+        peak = max(b["n"] for b in buckets)
+        table = Table("диапазон", "документов", "")
+        for b in buckets:
+            bar = "█" * max(1, round(30 * b["n"] / peak))
+            table.add_row(f"{b['lo']:+.2f} … {b['hi']:+.2f}", str(b["n"]), bar)
+        console.print(table)
+        total = sum(b["n"] for b in buckets)
+        for thr in (0.0, 0.1, 0.2):
+            kept = sum(b["n"] for b in buckets if float(b["lo"]) >= thr)
+            console.print(f"  порог {thr:+.1f} -> останется {kept} из {total} "
+                          f"({100 * kept / total:.0f}%)")
+        await db.close()
+        await storage.close()
+
+    _guard_infra(_run)
+
+
+async def _task_id_by_name(name: str | None):
+    if not name:
+        return None
+    for t in await db.list_tasks(500):
+        if t["name"] == name:
+            return t["id"]
+    return None
+
+
+@app.command()
 def stats(run_id: uuid.UUID) -> None:
     """Показать статистику прогона."""
 
@@ -148,10 +272,31 @@ def stats(run_id: uuid.UUID) -> None:
 
 
 @app.command()
-def search(query: str, task_id: str = typer.Option(None), limit: int = 10) -> None:
-    """Полнотекстовый поиск по собранному."""
+def search(
+    query: str,
+    task_id: str = typer.Option(None),
+    limit: int = 10,
+    semantic: bool = typer.Option(False, "--semantic", "-s",
+                                  help="Искать по смыслу, а не по словам"),
+) -> None:
+    """Поиск по собранному: по словам (Meilisearch) или по смыслу (эмбеддинги)."""
 
     async def _run() -> None:
+        if semantic:
+            vector = (await emb.embed_async([query]))[0]
+            hits = await db.semantic_search(
+                vector, task_id=uuid.UUID(task_id) if task_id else None, limit=limit
+            )
+            table = Table("близость", "релев.", "домен", "заголовок")
+            for h in hits:
+                rel = f"{h['relevance']:+.2f}" if h["relevance"] is not None else "—"
+                table.add_row(f"{h['similarity']:.3f}", rel,
+                              (h["domain"] or "")[:22], (h["title"] or "")[:48])
+            console.print(table)
+            await db.close()
+            await storage.close()
+            return
+
         res = await search_mod.search(query, task_id=task_id, limit=limit)
         table = Table("домен", "заголовок", "url")
         for hit in res.get("hits", []):

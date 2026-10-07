@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import re
 
-from selectolax.parser import HTMLParser
+# lexbor, а не parser: бэкенд Modest удалён в selectolax 1.0
+from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 # Теги без структурной ценности для селекторов
 DROP_TAGS = (
