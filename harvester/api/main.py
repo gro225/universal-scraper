@@ -270,6 +270,27 @@ async def search_items(
     return {"hits": [{**h, "id": str(h["id"])} for h in hits], "mode": "semantic"}
 
 
+@app.get("/tasks/{task_id}/entities")
+async def task_entities(
+    task_id: uuid.UUID,
+    topic_id: uuid.UUID | None = None,
+    limit: int = Query(40, le=200),
+) -> dict[str, Any]:
+    """Действующие лица задачи или отдельной подтемы.
+
+    Заполняется командой `harvester entities`."""
+    rows = await db.list_entities(task_id, topic_id=topic_id, limit=limit)
+    return {"entities": [{**e, "id": str(e["id"])} for e in rows]}
+
+
+@app.get("/tasks/{task_id}/entity-graph")
+async def task_entity_graph(
+    task_id: uuid.UUID, limit: int = Query(60, le=300)
+) -> dict[str, Any]:
+    """Кто с кем упоминается рядом: рёбра графа совместных упоминаний."""
+    return {"edges": await db.entity_pairs(task_id, limit=limit)}
+
+
 @app.get("/tasks/{task_id}/topics")
 async def task_topics(task_id: uuid.UUID, min_size: int = 1) -> dict[str, Any]:
     """Подтемы задачи: из чего состоит корпус. Считаются командой `harvester topics`."""

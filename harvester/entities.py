@@ -45,9 +45,13 @@ login register cart checkout password email address copyright reserved
 подписаться войти регистрация корзина оформить контакты реклама
 latest features interviews trending popular recommended playlist archive
 связаться тестирование подробнее показать ещё далее сообщить
+правила конфиденциальность безопасность помощь справка настройки
+copyright llc inc ltd gmbh рекламa соглашение лицензия
 """.split())  # noqa: SIM905 — многострочный список правится легче литерала
 
 _CONTRACTION = re.compile(r"[’']\w{1,2}$")
+# «playingLemon Sol» — склейка из-за потерянного пробела в разметке
+_GLUED = re.compile(r"[a-zа-яё][A-ZА-ЯЁ]")
 
 
 class EntitiesUnavailable(RuntimeError):
@@ -95,6 +99,8 @@ def is_noise(name: str) -> bool:
     if any(t.lower().strip(".,:") in UI_WORDS for t in tokens):
         return True
     if len(tokens) == 1 and _CONTRACTION.search(name):   # We've, It's
+        return True
+    if _GLUED.search(name):                              # playingLemon Sol
         return True
     return not any(ch.isalpha() for ch in name)
 

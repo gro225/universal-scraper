@@ -118,6 +118,14 @@
   .topic small { color: var(--muted); font-size: 12px; display: block; }
   .topic .n { float: right; font-size: 12px; color: var(--muted); font-weight: 500; }
 
+  .ents { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }
+  .ent {
+    font-size: 13px; padding: 3px 10px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--panel); color: var(--text);
+  }
+  .ent i { font-style: normal; color: var(--muted); font-size: 11px; margin-left: 5px; }
+  .ent[data-type=PER] { border-color: var(--accent); }
+
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   .more { display: block; margin: 16px auto 0; }
   .hidden { display: none; }
@@ -171,6 +179,8 @@
   <section id="topicsPanel" hidden>
     <h2 class="sec">Из чего состоит тема</h2>
     <div id="topicsList" class="topics"></div>
+    <h2 class="sec" id="entHead">Кто и что упоминается</h2>
+    <div id="entitiesList" class="ents"></div>
   </section>
 
   <div class="stats" id="stats"></div>
@@ -309,7 +319,7 @@ $('tabDocs').onclick = () => switchTab('docs');
 $('tabMedia').onclick = () => switchTab('media');
 $('taskFilter').onchange = (e) => {
   state.task = e.target.value; state.topic = '';
-  if (!$('topicsPanel').hidden) loadTopics();
+  if (!$('topicsPanel').hidden) { loadTopics(); loadEntities(); }
   load(true);
 };
 $('minRel').onchange = (e) => { state.minRel = e.target.value; load(true); };
@@ -340,6 +350,7 @@ async function loadTopics() {
       el.onclick = () => {
         state.topic = state.topic === el.dataset.id ? '' : el.dataset.id;
         loadTopics();
+        loadEntities();
         load(true);
       };
     }
@@ -348,11 +359,29 @@ async function loadTopics() {
   }
 }
 
+async function loadEntities() {
+  const box = $('entitiesList');
+  if (!state.task) { box.innerHTML = ''; return; }
+  const topQ = state.topic ? `&topic_id=${state.topic}` : '';
+  $('entHead').textContent = state.topic
+    ? 'Кто и что упоминается в выбранной подтеме'
+    : 'Кто и что упоминается';
+  try {
+    const { entities } = await api(`/tasks/${state.task}/entities?limit=30${topQ}`);
+    box.innerHTML = entities.length
+      ? entities.map(e => `<span class="ent" data-type="${esc(e.type || '')}"
+          title="${e.documents} док. на ${e.domains} дом.">${esc(e.name)}<i>${e.documents}</i></span>`).join('')
+      : '<p class="empty">Сущности ещё не извлечены: <code>harvester entities &lt;задача&gt;</code></p>';
+  } catch {
+    box.innerHTML = '<p class="empty">Не удалось загрузить сущности.</p>';
+  }
+}
+
 $('topicsToggle').onclick = () => {
   const panel = $('topicsPanel');
   panel.hidden = !panel.hidden;
   $('topicsToggle').setAttribute('aria-pressed', String(!panel.hidden));
-  if (!panel.hidden) loadTopics();
+  if (!panel.hidden) { loadTopics(); loadEntities(); }
 };
 
 // --- «Собрать страницы»: короткий путь без темы, поиска и YAML
