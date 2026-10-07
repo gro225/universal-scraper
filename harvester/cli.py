@@ -214,6 +214,86 @@ def rescore(task: str = typer.Argument(..., help="Имя задачи")) -> None
 
 
 @app.command()
+def topics(
+    task: str = typer.Argument(..., help='Имя задачи'),
+    threshold: float = typer.Option(None, '--threshold', '-t',
+                                    help='Косинусный порог слияния, по умолчанию 0.75'),
+    show: int = typer.Option(12, '--show', help='Сколько подтем показать'),
+    by: str = typer.Option('relevance', '--by',
+                           help='Сортировка: relevance (по умолчанию) или size'),
+    min_size: int = typer.Option(3, '--min-size',
+                                 help='Не показывать группы мельче'),
+    verbose: bool = typer.Option(False, '--verbose', '-v'),
+) -> None:
+    """Разобрать тему на подтемы: из чего состоит собранный корпус.
+
+    Отвечает на вопрос «что тут вообще есть» — в отличие от релевантности,
+    которая отвечает «насколько это по теме». Целую подтему видно одним взглядом,
+    и её можно принять или отбросить целиком."""
+    _setup_logging(verbose)
+
+    async def _run() -> None:
+        task_id = await _task_id_by_name(task)
+        if not task_id:
+            console.print(f'[red]задача {task!r} не найдена[/]')
+            raise typer.Exit(1)
+
+        rows = await db.documents_for_clustering(task_id)
+        if len(rows) < 3:
+            console.print('[yellow]мало документов с векторами — '
+                          'сначала `harvester embed`[/]')
+            raise typer.Exit(1)
+
+        import numpy as np
+
+        from .analysis import DEFAULT_THRESHOLD, analyze
+
+        vectors = np.array(
+            [[float(x) for x in r['vec'].strip('[]').split(',')] for r in rows]
+        )
+        texts = [f"{r['title']} {r['body'] or ''}" for r in rows]
+        with console.status(f'разбираю {len(rows)} документов…'):
+            found = analyze(vectors, texts,
+                            threshold=threshold or DEFAULT_THRESHOLD)
+            payload = []
+            for t in found:
+                rels = [rows[i]['relevance'] for i in t.members
+                        if rows[i]['relevance'] is not None]
+                payload.append({
+                    'label': t.label, 'keywords': t.keywords, 'size': t.size,
+                    'centroid': t.centroid,
+                    'avg_relevance': sum(rels) / len(rels) if rels else None,
+                    'representative': rows[t.representative]['id'],
+                    'members': [rows[i]['id'] for i in t.members],
+                })
+            await db.replace_topics(task_id, payload)
+
+        # по умолчанию сверху то, что по теме, а не то, чего больше:
+        # крупнейшие подтемы обычно как раз мусорные
+        ordered = sorted(
+            payload,
+            key=lambda t: (t['avg_relevance'] if t['avg_relevance'] is not None else -9),
+            reverse=True,
+        ) if by == 'relevance' else payload
+        # средняя по группе из двух документов — шум, в обзор она не нужна
+        ordered = [t for t in ordered if t['size'] >= min_size] or ordered
+
+        table = Table('док.', 'релев.', 'подтема', 'представитель')
+        for t in ordered[:show]:
+            rel = f"{t['avg_relevance']:+.2f}" if t['avg_relevance'] is not None else '—'
+            rep = next(r['title'] for r in rows if r['id'] == t['representative'])
+            table.add_row(str(t['size']), rel, t['label'][:46], (rep or '')[:40])
+        console.print(table)
+        tail = len(payload) - show
+        more = f', ещё {tail} мельче' if tail > 0 else ''
+        console.print(f'[dim]подтем всего {len(payload)}{more}[/]')
+        await db.close()
+        await storage.close()
+
+    _guard_infra(_run)
+
+
+@app.command()
 def relevance(task: str = typer.Argument(..., help="Имя задачи")) -> None:
     """Распределение оценок — чтобы выбрать порог глазами, а не наугад."""
 

@@ -61,6 +61,7 @@ harvester stats <run_id>
 | Fetch | T0 (HTTP), robots.txt, вежливость, circuit breaker, SSRF-guard | `connectors/generic_web.py` |
 | Извлечение | JSON-LD/OpenGraph → trafilatura → медиа и ссылки | `extractors/generic.py` |
 | Релевантность | эмбеддинги (fastembed/ONNX) + pgvector, оценка «тема минус антипример», поиск по смыслу | `embeddings.py`, `db.py` |
+| Разбор темы | кластеризация корпуса на подтемы, названия по TF-IDF | `analysis.py` |
 | Задел под Фазу 2 | минификация DOM для LLM-промпта (53–87% экономии) | `extractors/minify.py` |
 | Медиа | скачивание, дедуп по sha256, размеры, EXIF, webp-превью | `media/pipeline.py` |
 | Хранилище | Bronze (MinIO) + Silver (Postgres) + Meilisearch | `storage.py`, `db.py`, `search.py` |
@@ -74,7 +75,8 @@ harvester stats <run_id>
   уже считается и пишется). Рендер SPA (crawl4ai) и фильтр релевантности — сделаны.
 - **Фаза 2** — коннекторы (RSS, Reddit, YouTube, Telegram), LLM-экстрактор с индукцией
   CSS-рецептов, дизамбигуация темы, расписания, event bus.
-- **Фаза 3** — Gold-слой (Parquet/Iceberg), Metabase/DuckDB, граф сущностей, алерты.
+- **Фаза 3** — начата: подтемы корпуса есть. Осталось: граф сущностей, таймлайн,
+  Gold-слой (Parquet/Iceberg), дашборды, алерты на новые находки.
 
 ---
 

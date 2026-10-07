@@ -104,6 +104,20 @@
   }
   .rel.low { background: transparent; color: var(--muted); border: 1px solid var(--border); }
 
+  .sec { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 10px;
+         text-transform: uppercase; letter-spacing: .04em; }
+  .topics { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 10px; margin-bottom: 20px; }
+  .topic {
+    background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 14px; cursor: pointer; text-align: left; font: inherit; color: inherit;
+  }
+  .topic:hover { border-color: var(--accent); }
+  .topic[aria-pressed=true] { background: var(--accent-soft); border-color: var(--accent); }
+  .topic b { display: block; font-size: 14px; font-weight: 600; margin-bottom: 3px; }
+  .topic small { color: var(--muted); font-size: 12px; display: block; }
+  .topic .n { float: right; font-size: 12px; color: var(--muted); font-weight: 500; }
+
   .empty { color: var(--muted); padding: 40px 0; text-align: center; }
   .more { display: block; margin: 16px auto 0; }
   .hidden { display: none; }
@@ -130,6 +144,7 @@
   </label>
   <button id="tabDocs" aria-pressed="true">Документы</button>
   <button id="tabMedia" aria-pressed="false">Галерея</button>
+  <button id="topicsToggle">Подтемы</button>
   <button id="grabToggle" class="primary">Собрать страницы</button>
 </header>
 
@@ -153,6 +168,11 @@
     <p class="grab-msg" id="grabMsg" role="status"></p>
   </form>
 
+  <section id="topicsPanel" hidden>
+    <h2 class="sec">Из чего состоит тема</h2>
+    <div id="topicsList" class="topics"></div>
+  </section>
+
   <div class="stats" id="stats"></div>
   <div id="docs"></div>
   <div id="media" class="gallery hidden"></div>
@@ -161,7 +181,7 @@
 
 <script>
 const $ = (id) => document.getElementById(id);
-const state = { tab: 'docs', task: '', q: '', minRel: '', semantic: false,
+const state = { tab: 'docs', task: '', q: '', minRel: '', semantic: false, topic: '',
                 offset: 0, pageSize: 30 };
 
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c =>
@@ -222,6 +242,7 @@ async function load(reset) {
   if (reset) { state.offset = 0; }
   const taskQ = state.task ? `&task_id=${state.task}` : '';
   const relQ = state.minRel ? `&min_relevance=${state.minRel}` : '';
+  const topQ = state.topic ? `&topic_id=${state.topic}` : '';
 
   if (state.tab === 'media') {
     const { media } = await api(`/media?limit=${state.pageSize}&offset=${state.offset}${taskQ}`);
@@ -245,7 +266,7 @@ async function load(reset) {
     });
     items = res.hits || [];
   } else {
-    const res = await api(`/items?limit=${state.pageSize}&offset=${state.offset}${taskQ}${relQ}`);
+    const res = await api(`/items?limit=${state.pageSize}&offset=${state.offset}${taskQ}${relQ}${topQ}`);
     items = res.items || [];
   }
 
@@ -286,10 +307,53 @@ function switchTab(tab) {
 
 $('tabDocs').onclick = () => switchTab('docs');
 $('tabMedia').onclick = () => switchTab('media');
-$('taskFilter').onchange = (e) => { state.task = e.target.value; load(true); };
+$('taskFilter').onchange = (e) => {
+  state.task = e.target.value; state.topic = '';
+  if (!$('topicsPanel').hidden) loadTopics();
+  load(true);
+};
 $('minRel').onchange = (e) => { state.minRel = e.target.value; load(true); };
 $('semantic').onchange = (e) => { state.semantic = e.target.checked; if (state.q) load(true); };
 $('more').onclick = () => load(false);
+
+// --- подтемы: обзор «из чего состоит тема»
+async function loadTopics() {
+  const box = $('topicsList');
+  if (!state.task) {
+    box.innerHTML = '<p class="empty">Выберите задачу — подтемы считаются по ней.</p>';
+    return;
+  }
+  try {
+    const { topics } = await api(`/tasks/${state.task}/topics?min_size=3`);
+    if (!topics.length) {
+      box.innerHTML = '<p class="empty">Подтемы ещё не посчитаны: <code>harvester topics &lt;задача&gt;</code></p>';
+      return;
+    }
+    box.innerHTML = topics.map(t => `
+      <button class="topic" data-id="${t.id}" aria-pressed="${state.topic === t.id}">
+        <span class="n">${t.size}</span>
+        <b>${esc(t.label || 'без названия')}</b>
+        <small>релевантность ${t.avg_relevance == null ? '—' :
+          (t.avg_relevance >= 0 ? '+' : '') + t.avg_relevance.toFixed(2)} · ${esc(t.representative_title || '')}</small>
+      </button>`).join('');
+    for (const el of box.querySelectorAll('.topic')) {
+      el.onclick = () => {
+        state.topic = state.topic === el.dataset.id ? '' : el.dataset.id;
+        loadTopics();
+        load(true);
+      };
+    }
+  } catch {
+    box.innerHTML = '<p class="empty">Не удалось загрузить подтемы.</p>';
+  }
+}
+
+$('topicsToggle').onclick = () => {
+  const panel = $('topicsPanel');
+  panel.hidden = !panel.hidden;
+  $('topicsToggle').setAttribute('aria-pressed', String(!panel.hidden));
+  if (!panel.hidden) loadTopics();
+};
 
 // --- «Собрать страницы»: короткий путь без темы, поиска и YAML
 $('grabToggle').onclick = () => {

@@ -237,11 +237,12 @@ async def list_items(
     task_id: uuid.UUID | None = None,
     domain: str | None = None,
     min_relevance: float | None = Query(None, description="Порог: -1..1, обычно 0.2-0.4"),
+    topic_id: uuid.UUID | None = None,
     limit: int = Query(50, le=500),
     offset: int = 0,
 ) -> dict[str, Any]:
     items = await db.list_items(task_id, domain=domain, min_relevance=min_relevance,
-                                limit=limit, offset=offset)
+                                topic_id=topic_id, limit=limit, offset=offset)
     return {"items": [{**i, "id": str(i["id"])} for i in items], "limit": limit,
             "offset": offset}
 
@@ -267,6 +268,15 @@ async def search_items(
         limit=limit, min_relevance=min_relevance,
     )
     return {"hits": [{**h, "id": str(h["id"])} for h in hits], "mode": "semantic"}
+
+
+@app.get("/tasks/{task_id}/topics")
+async def task_topics(task_id: uuid.UUID, min_size: int = 1) -> dict[str, Any]:
+    """Подтемы задачи: из чего состоит корпус. Считаются командой `harvester topics`."""
+    topics = await db.list_topics(task_id)
+    return {"topics": [{**t, "id": str(t["id"]),
+                        "representative_document_id": None}
+                       for t in topics if t["size"] >= min_size]}
 
 
 @app.get("/tasks/{task_id}/relevance")

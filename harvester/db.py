@@ -328,6 +328,7 @@ async def list_items(
     *,
     domain: str | None = None,
     min_relevance: float | None = None,
+    topic_id: uuid.UUID | None = None,
     limit: int = 50,
     offset: int = 0,
 ) -> list[dict[str, Any]]:
@@ -341,10 +342,11 @@ async def list_items(
          where ($1::uuid is null or d.task_id = $1)
            and ($2::text is null or d.domain = $2)
            and ($5::real is null or d.relevance >= $5)
+           and ($6::uuid is null or d.topic_id = $6)
          order by d.created_at desc
          limit $3 offset $4
         """,
-        task_id, domain, limit, offset, min_relevance,
+        task_id, domain, limit, offset, min_relevance, topic_id,
     )
     return [dict(r) for r in rows]
 
@@ -449,6 +451,75 @@ async def relevance_histogram(task_id: uuid.UUID) -> list[dict[str, Any]]:
           from documents
          where task_id = $1 and relevance is not null
          group by 1 order by 1
+        """,
+        task_id,
+    )
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------- подтемы
+
+
+async def documents_for_clustering(
+    task_id: uuid.UUID, *, limit: int = 5000
+) -> list[dict[str, Any]]:
+    """Документы с векторами. Берём самые релевантные — если корпус не влезает целиком."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select id, coalesce(title, '') as title, left(text, 400) as body,
+               embedding::text as vec, relevance
+          from documents
+         where task_id = $1 and embedding is not null
+         order by relevance desc nulls last
+         limit $2
+        """,
+        task_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def replace_topics(task_id: uuid.UUID, topics: list[dict[str, Any]]) -> int:
+    """Записывает разбиение целиком: старое удаляется, новое вставляется.
+
+    Кластеризация не инкрементальна — новые документы меняют всё разбиение,
+    поэтому частичное обновление только путало бы."""
+    p = await pool()
+    async with p.acquire() as conn, conn.transaction():
+        await conn.execute('update documents set topic_id = null where task_id = $1', task_id)
+        await conn.execute('delete from topics where task_id = $1', task_id)
+        for t in topics:
+            topic_id = await conn.fetchval(
+                """
+                insert into topics
+                    (task_id, label, keywords, size, centroid, avg_relevance,
+                     representative_document_id)
+                values ($1,$2,$3,$4,$5::vector,$6,$7) returning id
+                """,
+                task_id, t['label'], t['keywords'], t['size'],
+                _vec(t['centroid']), t.get('avg_relevance'), t.get('representative'),
+            )
+            await conn.execute(
+                'update documents set topic_id = $1 where id = any($2::uuid[])',
+                topic_id, t['members'],
+            )
+    return len(topics)
+
+
+async def list_topics(task_id: uuid.UUID) -> list[dict[str, Any]]:
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select t.id, t.label, t.keywords, t.size, t.avg_relevance,
+               d.title as representative_title, d.source_url as representative_url,
+               d.domain as representative_domain,
+               (select array_agg(distinct x.domain)
+                  from (select domain from documents where topic_id = t.id
+                         order by relevance desc nulls last limit 5) x) as domains
+          from topics t
+          left join documents d on d.id = t.representative_document_id
+         where t.task_id = $1
+         order by t.avg_relevance desc nulls last, t.size desc
         """,
         task_id,
     )
