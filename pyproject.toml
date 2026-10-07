@@ -26,6 +26,8 @@ dependencies = [
 [project.optional-dependencies]
 tray = ["pystray>=0.19"]
 embed = ["fastembed>=0.9"]
+# После установки нужен один раз: python -m spacy download xx_ent_wiki_sm
+entities = ["spacy>=3.8"]
 # Тир T1. После установки нужен один раз `crawl4ai-setup` — он ставит браузеры.
 render = ["crawl4ai>=0.6"]
 dev = ["pytest>=8.3", "pytest-asyncio>=0.24", "ruff>=0.8"]

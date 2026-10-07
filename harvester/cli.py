@@ -294,6 +294,98 @@ def topics(
 
 
 @app.command()
+def entities(
+    task: str = typer.Argument(..., help='Имя задачи'),
+    show: int = typer.Option(20, '--show', help='Сколько сущностей показать'),
+    graph: bool = typer.Option(False, '--graph', help='Показать, кто с кем рядом'),
+    min_relevance: float = typer.Option(0.15, '--min-relevance',
+                                        help='Брать подтемы не ниже этой оценки'),
+    min_size: int = typer.Option(5, '--min-size', help='И не мельче стольких документов'),
+    verbose: bool = typer.Option(False, '--verbose', '-v'),
+) -> None:
+    """Кто и что упоминается: действующие лица темы.
+
+    Извлекается внутри подтем, а не по всему корпусу — по всему корпусу верх
+    занимает мусор, которого в нём большинство. Сначала `harvester topics`.
+
+    \b
+    harvester entities sol-lemon
+    harvester entities sol-lemon --graph"""
+    _setup_logging(verbose)
+
+    async def _run() -> None:
+        task_id = await _task_id_by_name(task)
+        if not task_id:
+            console.print(f'[red]задача {task!r} не найдена[/]')
+            raise typer.Exit(1)
+
+        if graph:
+            pairs = await db.entity_pairs(task_id)
+            if not pairs:
+                console.print('[yellow]связей нет — сначала `harvester entities`[/]')
+            else:
+                table = Table('вместе', 'кто', 'с кем')
+                for e in pairs[:show]:
+                    table.add_row(str(e['weight']), e['source'][:34], e['target'][:34])
+                console.print(table)
+            await db.close()
+            await storage.close()
+            return
+
+        from .entities import EntitiesUnavailable, extract, rank
+
+        # по всему корпусу верх занимает мусор: сущности ищем в релевантных подтемах
+        rows = await db.documents_with_topics(
+            task_id, min_relevance=min_relevance, min_size=min_size
+        )
+        if not rows:
+            console.print('[yellow]нет подходящих подтем — сначала `harvester topics`, '
+                          'либо снизьте --min-relevance[/]')
+            raise typer.Exit(1)
+
+        groups, order = [], {}
+        for i, r in enumerate(rows):
+            order.setdefault(r['topic_id'], []).append(i)
+        groups = list(order.values())
+
+        try:
+            with console.status(f'разбираю {len(rows)} документов…'):
+                mentions = extract([f"{r['title']}. {r['body'] or ''}" for r in rows])
+                ranked = rank(groups, mentions)
+        except EntitiesUnavailable as exc:
+            console.print(f'[red]{exc}[/]')
+            raise typer.Exit(1) from None
+
+        payload: dict[tuple[str, str], dict] = {}
+        for gi, members in enumerate(groups):
+            for mention, count, salience in ranked[gi]:
+                key = (mention.name, mention.type)
+                rec = payload.setdefault(key, {
+                    'name': mention.name, 'type': mention.type,
+                    'salience': salience, 'mentions': 0, 'documents': [],
+                })
+                rec['salience'] = max(rec['salience'], salience)
+                rec['mentions'] += count
+                rec['documents'].extend(
+                    rows[i]['id'] for i in members if mention in mentions[i]
+                )
+
+        await db.clear_entities(task_id)
+        saved = await db.save_entities(list(payload.values()))
+
+        table = Table('док.', 'дом.', 'тип', 'кто или что')
+        for e in await db.list_entities(task_id, limit=show):
+            table.add_row(str(e['documents']), str(e['domains']),
+                          e['type'] or '—', e['name'][:46])
+        console.print(table)
+        console.print(f'[dim]сущностей всего {saved}[/]')
+        await db.close()
+        await storage.close()
+
+    _guard_infra(_run)
+
+
+@app.command()
 def relevance(task: str = typer.Argument(..., help="Имя задачи")) -> None:
     """Распределение оценок — чтобы выбрать порог глазами, а не наугад."""
 

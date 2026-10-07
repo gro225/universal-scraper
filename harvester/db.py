@@ -526,6 +526,124 @@ async def list_topics(task_id: uuid.UUID) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+# -------------------------------------------------------------------- сущности
+
+
+async def save_entities(rows: list[dict[str, Any]]) -> int:
+    """Сохраняет сущности и их связь с документами.
+
+    Сама сущность глобальна (уникальна по имени и типу): один и тот же человек
+    может встретиться в разных задачах, и это одна запись."""
+    if not rows:
+        return 0
+    p = await pool()
+    saved = 0
+    async with p.acquire() as conn, conn.transaction():
+        for r in rows:
+            entity_id = await conn.fetchval(
+                """
+                insert into entities (name, type) values ($1, $2)
+                on conflict (name, type) do update set name = excluded.name
+                returning id
+                """,
+                r['name'], r['type'],
+            )
+            await conn.executemany(
+                """
+                insert into document_entities (document_id, entity_id, salience, mentions)
+                values ($1, $2, $3, $4)
+                on conflict (document_id, entity_id)
+                do update set salience = excluded.salience, mentions = excluded.mentions
+                """,
+                [(doc_id, entity_id, r['salience'], r['mentions']) for doc_id in r['documents']],
+            )
+            saved += 1
+    return saved
+
+
+async def clear_entities(task_id: uuid.UUID) -> None:
+    """Связи задачи сбрасываются перед пересчётом; сами сущности остаются общими."""
+    p = await pool()
+    await p.execute(
+        """
+        delete from document_entities de
+         using documents d
+         where de.document_id = d.id and d.task_id = $1
+        """,
+        task_id,
+    )
+
+
+async def list_entities(
+    task_id: uuid.UUID, *, topic_id: uuid.UUID | None = None, limit: int = 40
+) -> list[dict[str, Any]]:
+    """Действующие лица задачи или отдельной подтемы."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select e.id, e.name, e.type,
+               count(distinct de.document_id) as documents,
+               count(distinct d.domain) as domains,
+               max(de.salience) as salience
+          from entities e
+          join document_entities de on de.entity_id = e.id
+          join documents d on d.id = de.document_id
+         where d.task_id = $1 and ($2::uuid is null or d.topic_id = $2)
+         group by e.id, e.name, e.type
+         order by max(de.salience) desc nulls last, count(distinct de.document_id) desc
+         limit $3
+        """,
+        task_id, topic_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def entity_pairs(task_id: uuid.UUID, *, limit: int = 60) -> list[dict[str, Any]]:
+    """Кто с кем упоминается рядом — рёбра графа совместных упоминаний.
+
+    Отдельной таблицы не нужно: связь выводится соединением document_entities
+    с самой собой по документу."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select a.name as source, b.name as target, count(*) as weight
+          from document_entities da
+          join document_entities db on db.document_id = da.document_id
+                                   and da.entity_id < db.entity_id
+          join documents d on d.id = da.document_id
+          join entities a on a.id = da.entity_id
+          join entities b on b.id = db.entity_id
+         where d.task_id = $1
+         group by a.name, b.name
+        having count(*) >= 2
+         order by count(*) desc
+         limit $2
+        """,
+        task_id, limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def documents_with_topics(
+    task_id: uuid.UUID, *, min_relevance: float = 0.15, min_size: int = 5
+) -> list[dict[str, Any]]:
+    """Документы, уже разложенные по подтемам — вход для извлечения сущностей."""
+    p = await pool()
+    rows = await p.fetch(
+        """
+        select d.id, d.topic_id, coalesce(d.title, '') as title,
+               left(d.text, 1500) as body, t.label, t.avg_relevance, t.size
+          from documents d join topics t on t.id = d.topic_id
+         where d.task_id = $1
+           and t.size >= $2
+           and ($3::real is null or t.avg_relevance >= $3)
+         order by t.avg_relevance desc nulls last, t.id
+        """,
+        task_id, min_size, min_relevance,
+    )
+    return [dict(r) for r in rows]
+
+
 async def list_media(
     task_id: uuid.UUID | None = None, *, limit: int = 60, offset: int = 0
 ) -> list[dict[str, Any]]:
