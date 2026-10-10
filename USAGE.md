@@ -263,7 +263,7 @@ harvester-tray
 сервером:
 
 ```bash
-HARVESTER_API=http://<lan-ip>:8080 harvester-tray
+HARVESTER_API=http://<server-lan-ip>:8080 harvester-tray
 ```
 
 Переменные: `HARVESTER_API` (адрес API), `HARVESTER_TASKS` (папка с YAML, по умолчанию
