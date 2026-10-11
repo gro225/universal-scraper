@@ -27,9 +27,7 @@ class Settings(BaseSettings):
     searxng_url: str = "http://localhost:8888"
 
     # --- поведение краулера ---
-    user_agent: str = (
-        "UniversalHarvester/0.1 (+research crawler; contact: admin@example.com)"
-    )
+    user_agent: str = "UniversalHarvester/0.1 (+research crawler)"
     fetch_timeout_s: float = 20.0
     max_response_bytes: int = 8 * 1024 * 1024
     max_media_bytes: int = 25 * 1024 * 1024
