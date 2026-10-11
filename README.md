@@ -6,12 +6,12 @@
 harvester run tasks/sol-lemon.yaml    # тема → 477 документов и 727 картинок с 112 доменов
 ```
 
-![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-pgvector-4169E1?logo=postgresql&logoColor=white)
-![Redis](https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=white)
-![Docker](https://img.shields.io/badge/Docker_Compose-2496ED?logo=docker&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-116_passed-brightgreen)
+![Python](.github/badges/python.svg)
+![FastAPI](.github/badges/fastapi.svg)
+![PostgreSQL](.github/badges/postgresql.svg)
+![Redis](.github/badges/redis.svg)
+![Docker](.github/badges/docker.svg)
+![Tests](.github/badges/tests.svg)
 
 ---
 
