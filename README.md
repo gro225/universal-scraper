@@ -41,14 +41,14 @@ harvester run tasks/sol-lemon.yaml    # собирает по теме 477 до�
 flowchart LR
     T[Задача<br/>YAML / API / CLI] --> D[Поиск источников<br/>SearXNG]
     D --> F[Очередь URL<br/>Redis]
-    F --> W[Воркеры<br/>HTTP · рендер JS]
+    F --> W[Воркеры<br/>HTTP и рендер JS]
     W --> B[(Сырьё<br/>MinIO)]
-    B --> E[Извлечение<br/>текст · медиа · ссылки]
+    B --> E[Извлечение<br/>текст, медиа, ссылки]
     E -->|новые ссылки| F
     E --> R{Релевантность<br/>эмбеддинги}
-    R --> S[(Postgres + pgvector)]
+    R --> S[(Postgres с pgvector)]
     R --> M[(Meilisearch)]
-    S --> A[Анализ<br/>подтемы · сущности · граф]
+    S --> A[Анализ<br/>подтемы, сущности, граф]
 ```
 
 1. **Задача** описывается в YAML: тема, подсказки «что имеется в виду» и «что нет», глубина обхода, бюджеты.
@@ -82,7 +82,13 @@ flowchart LR
 
 ## Стек
 
-**Python 3.12**, asyncio · **FastAPI** + SSE для прогресса · **Typer** + Rich для CLI · **PostgreSQL** с **pgvector** · **Redis** для очереди · **MinIO** (S3) для сырья и медиа · **Meilisearch** для полнотекста · **SearXNG** для поиска источников · **trafilatura**, selectolax для извлечения · **fastembed** (ONNX) для эмбеддингов · **spaCy** для сущностей · **crawl4ai** для рендера JS · **Pillow** для медиа · **Docker Compose** · pytest, ruff.
+- **Язык:** Python 3.12, asyncio.
+- **API и CLI:** FastAPI, прогресс прогона отдаётся через SSE; командная строка на Typer и Rich.
+- **Хранение:** PostgreSQL с pgvector для данных и эмбеддингов, MinIO (S3) для сырых страниц и медиа, Redis для очереди адресов.
+- **Поиск:** Meilisearch для полнотекстового поиска, SearXNG для поиска источников.
+- **Извлечение:** trafilatura и selectolax для текста, crawl4ai для страниц на JS, Pillow для картинок.
+- **Анализ:** fastembed (ONNX) для эмбеддингов, spaCy для поиска сущностей.
+- **Инфраструктура и качество:** Docker Compose, pytest, ruff.
 
 ## Попробовать
 
